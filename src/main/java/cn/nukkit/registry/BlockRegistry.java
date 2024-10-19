@@ -32,7 +32,7 @@ public final class BlockRegistry implements BlockID, IRegistry<String, Block, Cl
     private static final Set<String> KEYSET = new HashSet<>();
     private static final Object2ObjectOpenHashMap<String, FastConstructor<? extends Block>> CACHE_CONSTRUCTORS = new Object2ObjectOpenHashMap<>();
     private static final Object2ObjectOpenHashMap<String, BlockProperties> PROPERTIES = new Object2ObjectOpenHashMap<>();
-    private static final Map<Plugin, List<CustomBlockDefinition>> CUSTOM_BLOCK_DEFINITIONS = new LinkedHashMap<>();
+    private static final Map<String, List<CustomBlockDefinition>> CUSTOM_BLOCK_DEFINITIONS = new LinkedHashMap<>();
 
     public static final Set<String> skipBlockSet = Set.of(
             "minecraft:camera",
@@ -1349,7 +1349,65 @@ public final class BlockRegistry implements BlockID, IRegistry<String, Block, Cl
             if (CACHE_CONSTRUCTORS.putIfAbsent(key, c) == null) {
                 if (CustomBlock.class.isAssignableFrom(value)) {
                     CustomBlock customBlock = (CustomBlock) c.invoke((Object) null);
-                    List<CustomBlockDefinition> customBlockDefinitions = CUSTOM_BLOCK_DEFINITIONS.computeIfAbsent(plugin, (p) -> new ArrayList<>());
+                    List<CustomBlockDefinition> customBlockDefinitions = CUSTOM_BLOCK_DEFINITIONS.computeIfAbsent(plugin.getName(), (p) -> new ArrayList<>());
+                    customBlockDefinitions.add(customBlock.getDefinition());
+                    int rid = 255 - CustomBlockDefinition.getRuntimeId(customBlock.getId());
+                    Registries.ITEM_RUNTIMEID.registerCustomRuntimeItem(new ItemRuntimeIdRegistry.RuntimeEntry(customBlock.getId(), rid, false));
+                    if (customBlock.shouldBeRegisteredInCreative()) {
+                        ItemBlock itemBlock = new ItemBlock(customBlock.toBlock());
+                        itemBlock.setNetId(null);
+                        Registries.CREATIVE.addCreativeItem(itemBlock);
+                    }
+                    KEYSET.add(key);
+                    PROPERTIES.put(key, blockProperties);
+                    blockProperties.getSpecialValueMap().values().forEach(Registries.BLOCKSTATE::registerInternal);
+                } else {
+                    throw new RegisterException("Register Error,must implement the CustomBlock interface!");
+                }
+            } else {
+                throw new RegisterException("There custom block has already been registered with the identifier: " + key);
+            }
+        } catch (NoSuchFieldException | IllegalAccessException | NoSuchMethodException e) {
+            throw new RegisterException(e);
+        } catch (Throwable e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    /**
+     * register custom block from custom classloader
+     */
+    public void registerCustomBlock(ClassLoader plugin, Class<? extends Block> value) throws RegisterException {
+        if (Modifier.isAbstract(value.getModifiers())) {
+            throw new RegisterException("You can't register a abstract block class!");
+        }
+        try {
+            Field properties = value.getDeclaredField("PROPERTIES");
+            properties.setAccessible(true);
+            int modifiers = properties.getModifiers();
+            BlockProperties blockProperties;
+            if (Modifier.isStatic(modifiers) && Modifier.isFinal(modifiers) && properties.getType() == BlockProperties.class) {
+                blockProperties = (BlockProperties) properties.get(value);
+            } else {
+                throw new RegisterException("There custom block class: %s must define a field `public static final BlockProperties PROPERTIES` in this class!".formatted(value.getSimpleName()));
+            }
+            try {
+                if (value.getMethod("getProperties").getDeclaringClass() != value) {
+                    throw new IllegalArgumentException();
+                }
+            } catch (Exception noSuchMethodException) {
+                throw new RegisterException("There custom block class: %s must override a method \n@Override\n".formatted(value.getSimpleName()) +
+                        "    public @NotNull BlockProperties getProperties() {\n" +
+                        "        return PROPERTIES;\n" +
+                        "    } in this class!");
+            }
+            String key = blockProperties.getIdentifier();
+            FastMemberLoader memberLoader = fastMemberLoaderCache.computeIfAbsent(plugin.getName(), p -> new FastMemberLoader(plugin));
+            FastConstructor<? extends Block> c = FastConstructor.create(value.getConstructor(BlockState.class), memberLoader, false);
+            if (CACHE_CONSTRUCTORS.putIfAbsent(key, c) == null) {
+                if (CustomBlock.class.isAssignableFrom(value)) {
+                    CustomBlock customBlock = (CustomBlock) c.invoke((Object) null);
+                    List<CustomBlockDefinition> customBlockDefinitions = CUSTOM_BLOCK_DEFINITIONS.computeIfAbsent(plugin.getName(), (p) -> new ArrayList<>());
                     customBlockDefinitions.add(customBlock.getDefinition());
                     int rid = 255 - CustomBlockDefinition.getRuntimeId(customBlock.getId());
                     Registries.ITEM_RUNTIMEID.registerCustomRuntimeItem(new ItemRuntimeIdRegistry.RuntimeEntry(customBlock.getId(), rid, false));

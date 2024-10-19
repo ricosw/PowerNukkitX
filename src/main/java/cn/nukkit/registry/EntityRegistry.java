@@ -378,6 +378,32 @@ public class EntityRegistry implements EntityID, IRegistry<EntityRegistry.Entity
         }
     }
 
+    /**
+     * register custom entity from custom classloader
+     */
+    public void registerCustomEntity(ClassLoader plugin, CustomEntityDefinition key, Class<? extends Entity> value) throws RegisterException {
+        if (CustomEntity.class.isAssignableFrom(value)) {
+            if (CLASS.putIfAbsent(key.id, value) == null) {
+                try {
+                    FastMemberLoader memberLoader = fastMemberLoaderCache.computeIfAbsent(plugin.getName(), p -> new FastMemberLoader(plugin));
+                    FAST_NEW.put(key.id, FastConstructor.create(value.getConstructor(IChunk.class, CompoundTag.class), memberLoader, false));
+                } catch (NoSuchMethodException e) {
+                    throw new RuntimeException(e);
+                }
+                int rid = RUNTIME_ID.getAndIncrement();
+                ID2RID.put(key.id, rid);
+                RID2ID.put(rid, key.id);
+                EntityDefinition entityDefinition = new EntityDefinition(key.id, key.bid, rid, key.hasSpawnegg, key.summonable);
+                DEFINITIONS.put(key.id, entityDefinition);
+                CUSTOM_ENTITY_DEFINITIONS.add(entityDefinition);
+            } else {
+                throw new RegisterException("This Entity has already been registered with the identifier: " + key.id);
+            }
+        } else {
+            throw new RegisterException("This class does not implement the CustomEntity interface and cannot be registered as a custom entity!");
+        }
+    }
+
     private void registerInternal(EntityDefinition key, Class<? extends Entity> value) {
         try {
             register(key, value);

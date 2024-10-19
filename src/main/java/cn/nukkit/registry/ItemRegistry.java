@@ -665,6 +665,32 @@ public final class ItemRegistry implements ItemID, IRegistry<String, Item, Class
         }
     }
 
+    public void registerCustomItem(ClassLoader plugin, Class<? extends Item> value) throws RegisterException {
+        try {
+            if (CustomItem.class.isAssignableFrom(value)) {
+                FastMemberLoader memberLoader = fastMemberLoaderCache.computeIfAbsent(plugin.getName(), p -> new FastMemberLoader(plugin));
+                FastConstructor<? extends Item> c = FastConstructor.create(value.getConstructor(), memberLoader, false);
+                CustomItem customItem = (CustomItem) c.invoke((Object) null);
+                String key = customItem.getDefinition().identifier();
+                if (CACHE_CONSTRUCTORS.putIfAbsent(key, c) == null) {
+                    CUSTOM_ITEM_DEFINITIONS.put(key, customItem.getDefinition());
+                    Registries.ITEM_RUNTIMEID.registerCustomRuntimeItem(new ItemRuntimeIdRegistry.RuntimeEntry(key, customItem.getDefinition().getRuntimeId(), true));
+                    Item ci = (Item) customItem;
+                    ci.setNetId(null);
+                    Registries.CREATIVE.addCreativeItem(ci);
+                } else {
+                    throw new RegisterException("This item has already been registered with the identifier: " + key);
+                }
+            } else {
+                throw new RegisterException("This class does not implement the CustomItem interface and cannot be registered as a custom item!");
+            }
+        } catch (NoSuchMethodException e) {
+            throw new RegisterException(e);
+        } catch (Throwable e) {
+            throw new RuntimeException(e);
+        }
+    }
+
     private void register0(String key, Class<? extends Item> value) {
         try {
             register(key, value);
